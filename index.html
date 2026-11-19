@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8">
+  <!-- Mobilra optimalizált nézet beállítása -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Android Kamera - Operatőr</title>
+  <style>
+    /* Sötét stílus az operatőri kijelzőnek */
+    body {
+      margin: 0;
+      background-color: #111;
+      color: #fff;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    /* A telefon saját kameraképének megjelenítője */
+    video {
+      width: 90%;
+      max-width: 640px;
+      border-radius: 8px;
+      border: 2px solid #333;
+    }
+    /* Státuszjelző doboz a kijelző tetején */
+    #statusBox {
+      margin-bottom: 15px;
+      padding: 10px 20px;
+      font-size: 1.2rem;
+      font-weight: bold;
+      border-radius: 5px;
+      background-color: #333;
+    }
+    /* Pirosan villogó jelzés, amikor felvétel fut a PC-n */
+    .recording {
+      background-color: #e60000 !important;
+      animation: blink 1s infinite;
+    }
+    @keyframes blink {
+      0% { opacity: 1; }
+      50% { opacity: 0.4; }
+      100% { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Státusz visszajelzés az operatőrnek -->
+<div id="statusBox">Készültség (Várakozás)</div>
+
+<!-- Az élő kamerakép helye -->
+<video id="webcam" autoplay playsinline muted></video>
+
+<!-- Láthatatlan Canvas a képkockák kinyeréséhez -->
+<canvas id="canvas" style="display:none;"></canvas>
+
+<script>
+  // FONTOS: Cseréld ki a PC-d VPN IP-címére (pl. 100.92.30.24 vagy a saját VPN IP-d)!
+  const SERVER_IP = "100.92.30.24";
+
+  // WebSocket kapcsolat kiépítése a Python szerverrel
+  const socket = new WebSocket(`ws://${SERVER_IP}:8000/ws`);
+
+  const video = document.getElementById('webcam');
+  const canvas = document.getElementById('canvas');
+  const context = canvas.getContext('2d');
+  const statusBox = document.getElementById('statusBox');
+
+  // 1. Hozzáférés a telefon kamerájához
+  navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: "environment", // Hátsó kamera használata
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    },
+    audio: false
+  })
+    .then(stream => {
+      // A kamera képét bekötjük a HTML5 video elembe
+      video.srcObject = stream;
+      // Amikor a kamera elindul, elkezdjük a képkockák küldését
+      video.onloadedmetadata = () => {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        startStreaming();
+      };
+    })
+    .catch(err => {
+      console.error("Kamera hozzáférési hiba:", err);
+      statusBox.innerText = "Kamera hiba!";
+    });
+
+  // 2. Képkockák folyamatos küldése a szerverre WebSocketen keresztül
+  function startStreaming() {
+    setInterval(() => {
+      // Ha a WebSocket kapcsolat él és nyitva van
+      if (socket.readyState === WebSocket.OPEN) {
+        // Rárajzoljuk az aktuális videó képkockát a rejtett vászonra
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        // Átalakítjuk JPEG formátumra, és elküldjük bináris tömbként a Python szervernek
+        canvas.toBlob(blob => {
+          if (blob) {
+            socket.send(blob);
+          }
+        }, 'image/jpeg', 0.6); // 0.6 = kompresszió a gyors hálózati átvitelért
+      }
+    }, 100); // Másodpercenként ~10 képkocka küldése
+  }
+
+  // 3. Státuszüzenetek fogadása a szerverről (ha a PC-ről elindítják a felvételt)
+  socket.onmessage = (event) => {
+    if (event.data === "RECORDING") {
+      statusBox.innerText = "● FELVÉTEL FUT";
+      statusBox.classList.add("recording");
+    } else if (event.data === "STOPPED") {
+      statusBox.innerText = "Készültség (Várakozás)";
+      statusBox.classList.remove("recording");
+    }
+  };
+</script>
+</body>
+</html>
